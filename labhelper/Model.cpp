@@ -537,7 +537,10 @@ void render(const Model* model, const bool submitMaterials)
 			setUniformSlow( current_program, "has_shininess_texture", has_shininess_texture );
 
 		}
-		glDrawArrays(GL_TRIANGLES, mesh.m_start_index, (GLsizei)mesh.m_number_of_vertices);
+		// glDrawArrays(GL_TRIANGLES, mesh.m_start_index, (GLsizei)mesh.m_number_of_vertices);
+        
+        // Point rendering
+		glDrawArrays(GL_POINTS, mesh.m_start_index, (GLsizei)mesh.m_number_of_vertices);
 	}
 	glBindVertexArray(0);
 }

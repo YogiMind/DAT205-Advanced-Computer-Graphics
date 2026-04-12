@@ -43,6 +43,8 @@ GLuint shaderProgram;       // Shader for rendering the final image
 GLuint simpleShaderProgram; // Shader used to draw the shadow map
 GLuint backgroundProgram;
 
+GLuint splatProgram;       // Shader for rendering the final image
+
 ///////////////////////////////////////////////////////////////////////////////
 // Environment
 ///////////////////////////////////////////////////////////////////////////////
@@ -100,6 +102,12 @@ void loadShaders(bool is_reload)
 	{
 		shaderProgram = shader;
 	}
+
+	shader = labhelper::loadShaderProgram("../project/splat.vert", "../project/splat.frag", "../project/splat.geom", is_reload);
+	if(shader != 0)
+	{
+		splatProgram = shader;
+	}
 }
 
 
@@ -133,7 +141,9 @@ void initialize()
 
 
 	glEnable(GL_DEPTH_TEST); // enable Z-buffering
-	glEnable(GL_CULL_FACE);  // enables backface culling
+	// glEnable(GL_CULL_FACE);  // enables backface culling
+
+    glEnable(GL_PROGRAM_POINT_SIZE); // Point rendering
 }
 
 void debugDrawLight(const glm::mat4& viewMatrix,
@@ -203,6 +213,79 @@ void drawScene(GLuint currentShaderProgram,
 	labhelper::render(fighterModel);
 }
 
+void render_points(const labhelper::Model* model, const bool submitMaterials)
+{
+	glBindVertexArray(model->m_vaob);
+	for(auto& mesh : model->m_meshes)
+	{
+		if(submitMaterials)
+		{
+			const labhelper::Material& material = model->m_materials[mesh.m_material_idx];
+
+			bool has_color_texture = material.m_color_texture.valid;
+			bool has_reflectivity_texture = material.m_reflectivity_texture.valid;
+			bool has_metalness_texture = material.m_metalness_texture.valid;
+			bool has_fresnel_texture = material.m_fresnel_texture.valid;
+			bool has_shininess_texture = material.m_shininess_texture.valid;
+			bool has_emission_texture = material.m_emission_texture.valid;
+			if ( has_color_texture )
+			{
+				glActiveTexture( GL_TEXTURE0 );
+				glBindTexture( GL_TEXTURE_2D, material.m_color_texture.gl_id );
+			}
+			if(has_reflectivity_texture)
+			{
+				glActiveTexture( GL_TEXTURE1 );
+				glBindTexture( GL_TEXTURE_2D, material.m_reflectivity_texture.gl_id );
+			}
+			if ( has_metalness_texture )
+			{
+				glActiveTexture( GL_TEXTURE2 );
+				glBindTexture( GL_TEXTURE_2D, material.m_metalness_texture.gl_id );
+			}
+			if ( has_fresnel_texture )
+			{
+				glActiveTexture( GL_TEXTURE3 );
+				glBindTexture( GL_TEXTURE_2D, material.m_fresnel_texture.gl_id );
+			}
+			if ( has_shininess_texture )
+			{
+				glActiveTexture( GL_TEXTURE4 );
+				glBindTexture( GL_TEXTURE_2D, material.m_shininess_texture.gl_id );
+			}
+			if ( has_emission_texture )
+			{
+				glActiveTexture( GL_TEXTURE5 );
+				glBindTexture( GL_TEXTURE_2D, material.m_emission_texture.gl_id );
+			}
+			glActiveTexture( GL_TEXTURE0 );
+			GLint current_program = 0;
+			glGetIntegerv(GL_CURRENT_PROGRAM, &current_program);
+
+            labhelper::setUniformSlow( current_program, "has_color_texture", has_color_texture );
+			labhelper::setUniformSlow( current_program, "has_emission_texture", has_emission_texture );
+
+			labhelper::setUniformSlow( current_program, "material_color", material.m_color );
+			labhelper::setUniformSlow( current_program, "material_reflectivity", material.m_reflectivity );
+			labhelper::setUniformSlow( current_program, "material_metalness", material.m_metalness );
+			labhelper::setUniformSlow( current_program, "material_fresnel", material.m_fresnel );
+			labhelper::setUniformSlow( current_program, "material_shininess", material.m_shininess );
+			labhelper::setUniformSlow( current_program, "material_emission", material.m_emission );
+
+			// Actually unused in the labs
+			labhelper::setUniformSlow( current_program, "has_reflectivity_texture", has_reflectivity_texture );
+			labhelper::setUniformSlow( current_program, "has_metalness_texture", has_metalness_texture );
+			labhelper::setUniformSlow( current_program, "has_fresnel_texture", has_fresnel_texture );
+			labhelper::setUniformSlow( current_program, "has_shininess_texture", has_shininess_texture );
+
+		}
+		// glDrawArrays(GL_TRIANGLES, mesh.m_start_index, (GLsizei)mesh.m_number_of_vertices);
+        
+        // Point rendering
+		glDrawArrays(GL_POINTS, mesh.m_start_index, (GLsizei)mesh.m_number_of_vertices);
+	}
+	glBindVertexArray(0);
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 /// This function will be called once per frame, so the code to set up
@@ -258,7 +341,7 @@ void display(void)
 	}
 	{
 		labhelper::perf::Scope s( "Scene" );
-		drawScene( shaderProgram, viewMatrix, projMatrix, lightViewMatrix, lightProjMatrix );
+		drawScene( splatProgram, viewMatrix, projMatrix, lightViewMatrix, lightProjMatrix );
 	}
 	debugDrawLight(viewMatrix, projMatrix, vec3(lightPosition));
 

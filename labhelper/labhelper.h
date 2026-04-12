@@ -138,6 +138,18 @@ std::string GetShaderInfoLog(GLuint obj);
 GLuint loadShaderProgram(const std::string& vertexShader,
                          const std::string& fragmentShader,
                          bool allow_errors = false);
+
+/**
+	 * Loads and compiles a fragment, vertex and geometry shader. Then creates a shader program
+	 * and attaches the shaders. Does NOT link the program, this is done with  linkShaderProgram()
+	 * The reason for this is that before linking we need to bind attribute locations, using
+	 * glBindAttribLocation and fragment data lications, using glBindFragDataLocation.
+	 */
+GLuint loadShaderProgram(const std::string& vertexShader, 
+                                 const std::string& fragmentShader, 
+                                 const std::string& geometryShader, 
+                                 bool allow_errors = false);
+
 /**
 	 * Call to link a shader program prevoiusly loaded using loadShaderProgram.
 	 */
