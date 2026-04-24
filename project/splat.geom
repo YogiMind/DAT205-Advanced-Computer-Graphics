@@ -3,9 +3,16 @@
 layout(points) in;
 layout(triangle_strip, max_vertices = 4) out;
 
+in vec4 position_opacity;
+in vec4 rotation;
+in vec4 scale;
+in vec4 color;
+
+uniform cameraPos;
 
 void main()
 {
+
     vec4 center = gl_in[0].gl_Position;
 
     vec2 offsets[4] = vec2[](
@@ -25,3 +32,5 @@ void main()
     
     EndPrimitive();
 }
+
+
