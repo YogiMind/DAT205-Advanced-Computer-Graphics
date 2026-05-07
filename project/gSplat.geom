@@ -10,9 +10,12 @@ uniform vec3 cameraPos; // unused
 uniform int viewportWidth;
 uniform int viewportHeight;
 
-in vec4 vPosition[];
-in vec4 vScale[];
+in vec3 vPosition[];
+in vec3 vScale[];
 in vec4 vColor[];
+// in vec3 vRotCol0[];
+// in vec3 vRotCol1[];
+// in vec3 vRotCol2[];
 in mat3 vRotation[];
 
 out vec2 gCenter; // maybe not needed?
@@ -24,10 +27,11 @@ out float gOpacity;
 // concider moving some parts to vertex shader?
 void main()
 {
-    vec3 center_world = vPosition[0].xyz;
-    float opacity = vPosition[0].w;
-    vec3 scale = vScale[0].xyz;
+    vec3 center_world = vPosition[0];
+    float opacity = vColor[0].w;
+    vec3 scale = vScale[0];
 
+    // mat3 R = mat3(vRotCol0[0], vRotCol1[0], vRotCol2[0]);
     mat3 R = vRotation[0];
     mat3 S = mat3(scale.x, 0.0, 0.0, 
                 0.0, scale.y, 0.0,
@@ -67,7 +71,7 @@ void main()
     );
 
     // Safe inverse
-    // if (determinant(cov_screen) < 1e-6) return; // exploding term
+    if (determinant(cov_screen) < 1e-6) return; // exploding term
     mat2 cov_inverse = inverse(cov_pixels);
 
     // Project center

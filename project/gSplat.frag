@@ -10,8 +10,6 @@ out vec4 fragmentColor;
 
 void main()
 {
-    // fragmentColor = vec4(1.0, 0.0, 0.0, 1.0); // flat color, ignore Gaussian
-
     vec2 d = (gl_FragCoord.xy - gCenter);
     // vec2 d = gUV * radius;
     float exponent = dot(d, invCov * d);

@@ -1,12 +1,5 @@
-
-#ifdef _WIN32
-extern "C" _declspec(dllexport) unsigned int NvOptimusEnablement = 0x00000001;
-#endif
-
 #include <GL/glew.h>
-#include <cmath>
 #include <cstdlib>
-#include <algorithm>
 #include <chrono>
 
 #include <labhelper.h>
@@ -22,6 +15,9 @@ using namespace glm;
 #include "hdr.h"
 #include "fbo.h"
 
+#include "ply.h"
+
+
 
 ///////////////////////////////////////////////////////////////////////////////
 // Various globals
@@ -35,6 +31,7 @@ int windowWidth, windowHeight;
 // Mouse input
 ivec2 g_prevMouseCoords = { -1, -1 };
 bool g_isMouseDragging = false;
+
 
 ///////////////////////////////////////////////////////////////////////////////
 // Shader programs
@@ -51,36 +48,40 @@ float environment_multiplier = 1.5f;
 GLuint environmentMap;
 const std::string envmap_base_name = "001";
 
-///////////////////////////////////////////////////////////////////////////////
-// Light source
-///////////////////////////////////////////////////////////////////////////////
-vec3 lightPosition;
-vec3 point_light_color = vec3(1.f, 1.f, 1.f);
-
-float point_light_intensity_multiplier = 10000.0f;
-
-
-
 
 ///////////////////////////////////////////////////////////////////////////////
 // Camera parameters.
 ///////////////////////////////////////////////////////////////////////////////
-vec3 cameraPosition(-70.0f, 50.0f, 70.0f);
+vec3 cameraPosition(0.0f, 0.0f, 3.0f);
 vec3 cameraDirection = normalize(vec3(0.0f) - cameraPosition);
 float cameraSpeed = 10.f;
 
 vec3 worldUp(0.0f, 1.0f, 0.0f);
 
-///////////////////////////////////////////////////////////////////////////////
-// Models
-///////////////////////////////////////////////////////////////////////////////
-labhelper::Model* fighterModel = nullptr;
-labhelper::Model* landingpadModel = nullptr;
-labhelper::Model* sphereModel = nullptr;
 
-mat4 roomModelMatrix;
-mat4 landingPadModelMatrix;
-mat4 fighterModelMatrix;
+///////////////////////////////////////////////////////////////////////////////
+// Gaussian
+///////////////////////////////////////////////////////////////////////////////
+GLuint gaussianVAO;
+GLuint gaussianVBO;
+PLYModel gaussianModel;
+GLsizei gaussianCount = 0;
+
+std::vector<GaussianVertex> testGaussians = {
+    // center, bright red, large round
+    { {0.0f, 0.0f, 0.0f}, {1.0f, 0.1f, 0.1f}, 0.9f, {2.0f, 2.0f, 2.0f}, {1,0,0,0} },
+    // offset right, green, stretched on X
+    { {5.0f, 0.0f, 0.0f}, {0.1f, 1.0f, 0.1f}, 0.9f, {4.0f, 0.5f, 0.5f}, {1,0,0,0} },
+    // offset up, blue, stretched on Y
+    { {0.0f, 5.0f, 0.0f}, {0.1f, 0.1f, 1.0f}, 0.9f, {0.5f, 4.0f, 0.5f}, {1,0,0,0} },
+    // offset forward, yellow, 45 degree rotation around Z
+    { {0.0f, 0.0f, 5.0f}, {1.0f, 1.0f, 0.1f}, 0.9f, {3.0f, 0.5f, 0.5f},
+      {0.9239f, 0.0f, 0.0f, 0.3827f} }, // 45deg around Z as (w,x,y,z)
+};
+
+
+
+
 
 void loadShaders(bool is_reload)
 {
@@ -96,7 +97,7 @@ void loadShaders(bool is_reload)
 		shaderProgram = shader;
 	}
 
-	shader = labhelper::loadShaderProgram("../project/splat.vert", "../project/gSplat.frag", "../project/gSplat.geom", is_reload);
+	shader = labhelper::loadShaderProgram("../project/gSplat.vert", "../project/gSplat.frag", "../project/gSplat.geom", is_reload);
 	if(shader != 0)
 	{
 		splatProgram = shader;
@@ -111,6 +112,7 @@ void initialize()
 {
 	ENSURE_INITIALIZE_ONLY_ONCE();
 
+
 	///////////////////////////////////////////////////////////////////////
 	//		Load Shaders
 	///////////////////////////////////////////////////////////////////////
@@ -119,13 +121,7 @@ void initialize()
 	///////////////////////////////////////////////////////////////////////
 	// Load models and set up model matrices
 	///////////////////////////////////////////////////////////////////////
-	fighterModel = labhelper::loadModelFromOBJ("../scenes/NewShip.obj");
-	landingpadModel = labhelper::loadModelFromOBJ("../scenes/landingpad.obj");
-	sphereModel = labhelper::loadModelFromOBJ("../scenes/sphere.obj");
-
-	roomModelMatrix = mat4(1.0f);
-	fighterModelMatrix = translate(15.0f * worldUp);
-	landingPadModelMatrix = mat4(1.0f);
+    gaussianModel = loadPLY("../scenes/ply/point_cloud.ply");
 
 	///////////////////////////////////////////////////////////////////////
 	// Load environment map
@@ -133,24 +129,63 @@ void initialize()
 	environmentMap = labhelper::loadHdrTexture("../scenes/envmaps/" + envmap_base_name + ".hdr");
 
 
+	///////////////////////////////////////////////////////////////////////
+    // Upload Gaussian model
+	///////////////////////////////////////////////////////////////////////
+
+    // Upload
+    glGenVertexArrays(1, &gaussianVAO);
+    glGenBuffers(1, &gaussianVBO);
+
+    glBindVertexArray(gaussianVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, gaussianVBO);
+    glBufferData(GL_ARRAY_BUFFER,
+        gaussianModel.gaussians.size() * sizeof(GaussianVertex),
+        gaussianModel.gaussians.data(),
+        GL_STATIC_DRAW);
+
+    // glBufferData(GL_ARRAY_BUFFER,
+    //         testGaussians.size() * sizeof(GaussianVertex),
+    //         testGaussians.data(),
+    //         GL_STATIC_DRAW);
+
+    // pos: location 0, 3 floats
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(GaussianVertex),
+                          (void*)offsetof(GaussianVertex, pos));
+
+    // color: location 1, 3 floats
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(GaussianVertex),
+                          (void*)offsetof(GaussianVertex, color));
+
+    // opacity: location 2, 1 float
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(GaussianVertex),
+                          (void*)offsetof(GaussianVertex, opacity));
+
+    // scale: location 3, 3 floats
+    glEnableVertexAttribArray(3);
+    glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(GaussianVertex),
+                          (void*)offsetof(GaussianVertex, scale));
+
+    // rot: location 4, 4 floats
+    glEnableVertexAttribArray(4);
+    glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, sizeof(GaussianVertex),
+                          (void*)offsetof(GaussianVertex, rot));
+
+    glBindVertexArray(0);
+
+
+    gaussianCount = (GLsizei)gaussianModel.gaussians.size();
+    gaussianModel.gaussians = std::vector<GaussianVertex>(); // Free memory
+
 	glEnable(GL_DEPTH_TEST); // enable Z-buffering
-	// glEnable(GL_CULL_FACE);  // enables backface culling
 
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     glEnable(GL_PROGRAM_POINT_SIZE); // Point rendering
-}
-
-void debugDrawLight(const glm::mat4& viewMatrix,
-                    const glm::mat4& projectionMatrix,
-                    const glm::vec3& worldSpaceLightPos)
-{
-	mat4 modelMatrix = glm::translate(worldSpaceLightPos);
-	glUseProgram(shaderProgram);
-	labhelper::setUniformSlow(shaderProgram, "modelViewProjectionMatrix",
-	                          projectionMatrix * viewMatrix * modelMatrix);
-	labhelper::render(sphereModel);
 }
 
 
@@ -163,125 +198,6 @@ void drawBackground(const mat4& viewMatrix, const mat4& projectionMatrix)
 	labhelper::drawFullScreenQuad();
 }
 
-
-///////////////////////////////////////////////////////////////////////////////
-/// This function is used to draw the main objects on the scene
-///////////////////////////////////////////////////////////////////////////////
-void drawScene(GLuint currentShaderProgram,
-               const mat4& viewMatrix,
-               const mat4& projectionMatrix,
-               const mat4& lightViewMatrix,
-               const mat4& lightProjectionMatrix)
-{
-	glUseProgram(currentShaderProgram);
-	// Light source
-	vec4 viewSpaceLightPosition = viewMatrix * vec4(lightPosition, 1.0f);
-	labhelper::setUniformSlow(currentShaderProgram, "point_light_color", point_light_color);
-	labhelper::setUniformSlow(currentShaderProgram, "point_light_intensity_multiplier",
-	                          point_light_intensity_multiplier);
-	labhelper::setUniformSlow(currentShaderProgram, "viewSpaceLightPosition", vec3(viewSpaceLightPosition));
-	labhelper::setUniformSlow(currentShaderProgram, "viewSpaceLightDir",
-	                          normalize(vec3(viewMatrix * vec4(-lightPosition, 0.0f))));
-
-
-	// Environment
-	labhelper::setUniformSlow(currentShaderProgram, "environment_multiplier", environment_multiplier);
-
-	// camera
-	labhelper::setUniformSlow(currentShaderProgram, "viewInverse", inverse(viewMatrix));
-
-	// landing pad
-	labhelper::setUniformSlow(currentShaderProgram, "modelViewProjectionMatrix",
-	                          projectionMatrix * viewMatrix * landingPadModelMatrix);
-	labhelper::setUniformSlow(currentShaderProgram, "modelViewMatrix", viewMatrix * landingPadModelMatrix);
-	labhelper::setUniformSlow(currentShaderProgram, "normalMatrix",
-	                          inverse(transpose(viewMatrix * landingPadModelMatrix)));
-
-	labhelper::render(landingpadModel);
-
-	// Fighter
-	labhelper::setUniformSlow(currentShaderProgram, "modelViewProjectionMatrix",
-	                          projectionMatrix * viewMatrix * fighterModelMatrix);
-	labhelper::setUniformSlow(currentShaderProgram, "modelViewMatrix", viewMatrix * fighterModelMatrix);
-	labhelper::setUniformSlow(currentShaderProgram, "normalMatrix",
-	                          inverse(transpose(viewMatrix * fighterModelMatrix)));
-
-	labhelper::render(fighterModel);
-}
-
-// void render_points(const labhelper::Model* model, const bool submitMaterials)
-// {
-// 	glBindVertexArray(model->m_vaob);
-// 	for(auto& mesh : model->m_meshes)
-// 	{
-// 		if(submitMaterials)
-// 		{
-// 			const labhelper::Material& material = model->m_materials[mesh.m_material_idx];
-//
-// 			bool has_color_texture = material.m_color_texture.valid;
-// 			bool has_reflectivity_texture = material.m_reflectivity_texture.valid;
-// 			bool has_metalness_texture = material.m_metalness_texture.valid;
-// 			bool has_fresnel_texture = material.m_fresnel_texture.valid;
-// 			bool has_shininess_texture = material.m_shininess_texture.valid;
-// 			bool has_emission_texture = material.m_emission_texture.valid;
-// 			if ( has_color_texture )
-// 			{
-// 				glActiveTexture( GL_TEXTURE0 );
-// 				glBindTexture( GL_TEXTURE_2D, material.m_color_texture.gl_id );
-// 			}
-// 			if(has_reflectivity_texture)
-// 			{
-// 				glActiveTexture( GL_TEXTURE1 );
-// 				glBindTexture( GL_TEXTURE_2D, material.m_reflectivity_texture.gl_id );
-// 			}
-// 			if ( has_metalness_texture )
-// 			{
-// 				glActiveTexture( GL_TEXTURE2 );
-// 				glBindTexture( GL_TEXTURE_2D, material.m_metalness_texture.gl_id );
-// 			}
-// 			if ( has_fresnel_texture )
-// 			{
-// 				glActiveTexture( GL_TEXTURE3 );
-// 				glBindTexture( GL_TEXTURE_2D, material.m_fresnel_texture.gl_id );
-// 			}
-// 			if ( has_shininess_texture )
-// 			{
-// 				glActiveTexture( GL_TEXTURE4 );
-// 				glBindTexture( GL_TEXTURE_2D, material.m_shininess_texture.gl_id );
-// 			}
-// 			if ( has_emission_texture )
-// 			{
-// 				glActiveTexture( GL_TEXTURE5 );
-// 				glBindTexture( GL_TEXTURE_2D, material.m_emission_texture.gl_id );
-// 			}
-// 			glActiveTexture( GL_TEXTURE0 );
-// 			GLint current_program = 0;
-// 			glGetIntegerv(GL_CURRENT_PROGRAM, &current_program);
-//
-//             labhelper::setUniformSlow( current_program, "has_color_texture", has_color_texture );
-// 			labhelper::setUniformSlow( current_program, "has_emission_texture", has_emission_texture );
-//
-// 			labhelper::setUniformSlow( current_program, "material_color", material.m_color );
-// 			labhelper::setUniformSlow( current_program, "material_reflectivity", material.m_reflectivity );
-// 			labhelper::setUniformSlow( current_program, "material_metalness", material.m_metalness );
-// 			labhelper::setUniformSlow( current_program, "material_fresnel", material.m_fresnel );
-// 			labhelper::setUniformSlow( current_program, "material_shininess", material.m_shininess );
-// 			labhelper::setUniformSlow( current_program, "material_emission", material.m_emission );
-//
-// 			// Actually unused in the labs
-// 			labhelper::setUniformSlow( current_program, "has_reflectivity_texture", has_reflectivity_texture );
-// 			labhelper::setUniformSlow( current_program, "has_metalness_texture", has_metalness_texture );
-// 			labhelper::setUniformSlow( current_program, "has_fresnel_texture", has_fresnel_texture );
-// 			labhelper::setUniformSlow( current_program, "has_shininess_texture", has_shininess_texture );
-//
-// 		}
-// 		// glDrawArrays(GL_TRIANGLES, mesh.m_start_index, (GLsizei)mesh.m_number_of_vertices);
-//
-//         // Point rendering
-// 		glDrawArrays(GL_POINTS, mesh.m_start_index, (GLsizei)mesh.m_number_of_vertices);
-// 	}
-// 	glBindVertexArray(0);
-// }
 
 ///////////////////////////////////////////////////////////////////////////////
 /// This function will be called once per frame, so the code to set up
@@ -310,11 +226,6 @@ void display(void)
 	mat4 projMatrix = perspective(radians(45.0f), float(windowWidth) / float(windowHeight), 5.0f, 2000.0f);
 	mat4 viewMatrix = lookAt(cameraPosition, cameraPosition + cameraDirection, worldUp);
 
-	vec4 lightStartPosition = vec4(40.0f, 40.0f, 0.0f, 1.0f);
-	lightPosition = vec3(rotate(currentTime, worldUp) * lightStartPosition);
-	mat4 lightViewMatrix = lookAt(lightPosition, vec3(0.0f), worldUp);
-	mat4 lightProjMatrix = perspective(radians(45.0f), 1.0f, 25.0f, 100.0f);
-
 	///////////////////////////////////////////////////////////////////////////
 	// Bind the environment map(s) to unused texture units
 	///////////////////////////////////////////////////////////////////////////
@@ -331,27 +242,28 @@ void display(void)
 	glClearColor(0.2f, 0.2f, 0.8f, 1.0f);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    GLuint dummyVAO;
-    glGenVertexArrays(1, &dummyVAO);
 	{
 		labhelper::perf::Scope s( "Background" );
 		drawBackground(viewMatrix, projMatrix);
 	}
 
+
+	///////////////////////////////////////////////////////////////////////////
+	// Draw Gaussians
+	///////////////////////////////////////////////////////////////////////////
 	glUseProgram(splatProgram);
     
 	labhelper::setUniformSlow(splatProgram, "projectionMatrix", projMatrix);
 	labhelper::setUniformSlow(splatProgram, "viewMatrix", viewMatrix);
 	labhelper::setUniformSlow(splatProgram, "viewportWidth", windowWidth);
 	labhelper::setUniformSlow(splatProgram, "viewportHeight", windowHeight);
-    glBindVertexArray(dummyVAO);
-    glDrawArrays(GL_POINTS, 0, 1);
 
-	// {
-	// 	labhelper::perf::Scope s( "Scene" );
-	// 	drawScene( splatProgram, viewMatrix, projMatrix, lightViewMatrix, lightProjMatrix );
-	// }
-	// debugDrawLight(viewMatrix, projMatrix, vec3(lightPosition));
+    glDepthMask(GL_FALSE);
+    glBindVertexArray(gaussianVAO);
+
+    glDrawArrays(GL_POINTS, 0, gaussianCount);
+
+    glDepthMask(GL_TRUE);
 
 }
 
@@ -498,10 +410,6 @@ int main(int argc, char* argv[])
 		// Swap front and back buffer. This frame will now been displayed.
 		SDL_GL_SwapWindow(g_window);
 	}
-	// Free Models
-	labhelper::freeModel(fighterModel);
-	labhelper::freeModel(landingpadModel);
-	labhelper::freeModel(sphereModel);
 
 	// Shut down everything. This includes the window and all other subsystems.
 	labhelper::shutDown(g_window);
