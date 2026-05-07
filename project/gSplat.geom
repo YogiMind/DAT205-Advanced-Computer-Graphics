@@ -13,25 +13,21 @@ uniform int viewportHeight;
 in vec3 vPosition[];
 in vec3 vScale[];
 in vec4 vColor[];
-// in vec3 vRotCol0[];
-// in vec3 vRotCol1[];
-// in vec3 vRotCol2[];
 in mat3 vRotation[];
 
-out vec2 gCenter; // maybe not needed?
-out mat2 invCov;
 out vec2 gUV;
-out vec4 gColor;
-out float gOpacity;
+flat out vec2 gCenter; // maybe not needed?
+flat out vec4 gColor;
+flat out float gOpacity;
+flat out mat2 invCov;
 
-// concider moving some parts to vertex shader?
 void main()
 {
     vec3 center_world = vPosition[0];
+    center_world.y = -center_world.y; // Flip coordinate system
     float opacity = vColor[0].w;
     vec3 scale = vScale[0];
 
-    // mat3 R = mat3(vRotCol0[0], vRotCol1[0], vRotCol2[0]);
     mat3 R = vRotation[0];
     mat3 S = mat3(scale.x, 0.0, 0.0, 
                 0.0, scale.y, 0.0,
@@ -46,7 +42,7 @@ void main()
     vec3 p = (viewMatrix * vec4(center_world, 1.0)).xyz;
     float x = p.x;
     float y = p.y;
-    float z = p.z; // camera dir, do i need to transform other coords?
+    float z = p.z;
 
     // if (z <= 0.0) return;
 
@@ -70,8 +66,11 @@ void main()
         cov_screen[1][1] * (vp.y * 0.5) * (vp.y * 0.5)
     );
 
-    // Safe inverse
-    if (determinant(cov_screen) < 1e-6) return; // exploding term
+    // radius cull
+    float r = 3.0 * sqrt(max(cov_pixels[0][0], cov_pixels[1][1]));
+    if (r < 1.0) return;
+    if (determinant(cov_pixels) < 1e-3) return;
+
     mat2 cov_inverse = inverse(cov_pixels);
 
     // Project center

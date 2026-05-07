@@ -64,8 +64,8 @@ vec3 worldUp(0.0f, 1.0f, 0.0f);
 ///////////////////////////////////////////////////////////////////////////////
 GLuint gaussianVAO;
 GLuint gaussianVBO;
-PLYModel gaussianModel;
 GLsizei gaussianCount = 0;
+PLYModel gaussianModel;
 
 std::vector<GaussianVertex> testGaussians = {
     // center, bright red, large round
@@ -180,7 +180,7 @@ void initialize()
     gaussianCount = (GLsizei)gaussianModel.gaussians.size();
     gaussianModel.gaussians = std::vector<GaussianVertex>(); // Free memory
 
-	glEnable(GL_DEPTH_TEST); // enable Z-buffering
+	// glEnable(GL_DEPTH_TEST); // enable Z-buffering
 
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -237,15 +237,16 @@ void display(void)
 	///////////////////////////////////////////////////////////////////////////
 	// Draw from camera
 	///////////////////////////////////////////////////////////////////////////
+
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 	glViewport(0, 0, windowWidth, windowHeight);
-	glClearColor(0.2f, 0.2f, 0.8f, 1.0f);
+	glClearColor(0.f, 0.f, 0.f, 1.0f);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-	{
-		labhelper::perf::Scope s( "Background" );
-		drawBackground(viewMatrix, projMatrix);
-	}
+	//
+	// {
+	// 	labhelper::perf::Scope s( "Background" );
+	// 	drawBackground(viewMatrix, projMatrix);
+	// }
 
 
 	///////////////////////////////////////////////////////////////////////////

@@ -9,9 +9,6 @@ layout(location = 4) in vec4 rotation;
 
 out vec3 vPosition;
 out mat3 vRotation;
-// out vec3 vRotCol0;
-// out vec3 vRotCol1;
-// out vec3 vRotCol2;
 out vec3 vScale;
 out vec4 vColor;
 
@@ -29,12 +26,7 @@ mat3 quatToMat3(vec4 q) {
 void main()
 {
     vPosition = position;
-
     vRotation = quatToMat3(rotation); 
-    // vRotCol0 = vRotation[0];
-    // vRotCol1 = vRotation[1];
-    // vRotCol2 = vRotation[2];
-
     vScale = scale;
     vColor = vec4(color, opacity);
 
