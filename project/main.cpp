@@ -1,10 +1,12 @@
 #include <GL/glew.h>
+#include <algorithm>
 #include <cstdlib>
 #include <chrono>
 
 #include <labhelper.h>
 #include <imgui.h>
 
+#include <numeric>
 #include <perf.h>
 
 #include <glm/glm.hpp>
@@ -27,6 +29,7 @@ float currentTime = 0.0f;
 float previousTime = 0.0f;
 float deltaTime = 0.0f;
 int windowWidth, windowHeight;
+int frameCount = 0;
 
 // Mouse input
 ivec2 g_prevMouseCoords = { -1, -1 };
@@ -56,6 +59,9 @@ vec3 cameraPosition(0.0f, 0.0f, 3.0f);
 vec3 cameraDirection = normalize(vec3(0.0f) - cameraPosition);
 float cameraSpeed = 10.f;
 
+vec3 prevCamDir = cameraDirection;
+vec3 prevCamPos = cameraPosition;
+
 vec3 worldUp(0.0f, 1.0f, 0.0f);
 
 
@@ -67,20 +73,9 @@ GLuint gaussianVBO;
 GLsizei gaussianCount = 0;
 PLYModel gaussianModel;
 
-std::vector<GaussianVertex> testGaussians = {
-    // center, bright red, large round
-    { {0.0f, 0.0f, 0.0f}, {1.0f, 0.1f, 0.1f}, 0.9f, {2.0f, 2.0f, 2.0f}, {1,0,0,0} },
-    // offset right, green, stretched on X
-    { {5.0f, 0.0f, 0.0f}, {0.1f, 1.0f, 0.1f}, 0.9f, {4.0f, 0.5f, 0.5f}, {1,0,0,0} },
-    // offset up, blue, stretched on Y
-    { {0.0f, 5.0f, 0.0f}, {0.1f, 0.1f, 1.0f}, 0.9f, {0.5f, 4.0f, 0.5f}, {1,0,0,0} },
-    // offset forward, yellow, 45 degree rotation around Z
-    { {0.0f, 0.0f, 5.0f}, {1.0f, 1.0f, 0.1f}, 0.9f, {3.0f, 0.5f, 0.5f},
-      {0.9239f, 0.0f, 0.0f, 0.3827f} }, // 45deg around Z as (w,x,y,z)
-};
-
-
-
+std::vector<glm::vec3> gaussianPositions;
+GLuint gaussianEBO; // element buffer
+std::vector<uint32_t> sortedIndices;
 
 
 void loadShaders(bool is_reload)
@@ -144,11 +139,6 @@ void initialize()
         gaussianModel.gaussians.data(),
         GL_STATIC_DRAW);
 
-    // glBufferData(GL_ARRAY_BUFFER,
-    //         testGaussians.size() * sizeof(GaussianVertex),
-    //         testGaussians.data(),
-    //         GL_STATIC_DRAW);
-
     // pos: location 0, 3 floats
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(GaussianVertex),
@@ -174,11 +164,30 @@ void initialize()
     glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, sizeof(GaussianVertex),
                           (void*)offsetof(GaussianVertex, rot));
 
-    glBindVertexArray(0);
 
 
     gaussianCount = (GLsizei)gaussianModel.gaussians.size();
+    gaussianPositions.resize(gaussianCount);
+    for (int i = 0; i < gaussianCount; i++) {
+        gaussianPositions[i] = glm::vec3(
+                gaussianModel.gaussians[i].pos[0],
+                gaussianModel.gaussians[i].pos[1],
+                gaussianModel.gaussians[i].pos[2]);
+    }
+
+    sortedIndices.resize(gaussianCount);
+    std::iota(sortedIndices.begin(), sortedIndices.end(), 0);
+
+    glGenBuffers(1, &gaussianEBO);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gaussianEBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+            sortedIndices.size() * sizeof(uint32_t),
+            sortedIndices.data(),
+            GL_DYNAMIC_DRAW); // dynamic since we update each frame
+
+
     gaussianModel.gaussians = std::vector<GaussianVertex>(); // Free memory
+    glBindVertexArray(0);
 
 	// glEnable(GL_DEPTH_TEST); // enable Z-buffering
 
@@ -259,12 +268,33 @@ void display(void)
 	labhelper::setUniformSlow(splatProgram, "viewportWidth", windowWidth);
 	labhelper::setUniformSlow(splatProgram, "viewportHeight", windowHeight);
 
-    glDepthMask(GL_FALSE);
+    // glDepthMask(GL_FALSE);
+
+    // Sort back to front
+    if (frameCount % 300 == 0) {
+        std::sort(sortedIndices.begin(), sortedIndices.end(), [&](uint32_t a, uint32_t b) {
+                float da = glm::dot(gaussianPositions[a] - cameraPosition, cameraDirection);
+                float db = glm::dot(gaussianPositions[b] - cameraPosition, cameraDirection);
+                return da > db; // further first
+                });
+    }
+    frameCount++;
+
+    // Re-upload sorted indices
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gaussianEBO);
+    glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0,
+            sortedIndices.size() * sizeof(uint32_t),
+            sortedIndices.data());
+
+    // Draw using indices instead of glDrawArrays
     glBindVertexArray(gaussianVAO);
+    glDrawElements(GL_POINTS, gaussianCount, GL_UNSIGNED_INT, 0);
 
-    glDrawArrays(GL_POINTS, 0, gaussianCount);
+    // glBindVertexArray(gaussianVAO);
+    //
+    // glDrawArrays(GL_POINTS, 0, gaussianCount);
 
-    glDepthMask(GL_TRUE);
+    // glDepthMask(GL_TRUE);
 
 }
 

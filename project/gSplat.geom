@@ -24,7 +24,6 @@ flat out mat2 invCov;
 void main()
 {
     vec3 center_world = vPosition[0];
-    center_world.y = -center_world.y; // Flip coordinate system
     float opacity = vColor[0].w;
     vec3 scale = vScale[0];
 

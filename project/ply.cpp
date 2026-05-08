@@ -63,8 +63,8 @@ PLYModel loadPLY(const std::string& path) {
         GaussianVertex& v = model.gaussians[i];
 
         v.pos[0] = getFloat(i, "x");
-        v.pos[1] = getFloat(i, "y");
-        v.pos[2] = getFloat(i, "z");
+        v.pos[1] = -getFloat(i, "y");
+        v.pos[2] = -getFloat(i, "z");
 
         v.color[0] = 0.5f + 0.2820948f * getFloat(i, "f_dc_0"); // Constants??
         v.color[1] = 0.5f + 0.2820948f * getFloat(i, "f_dc_1");
@@ -78,8 +78,8 @@ PLYModel loadPLY(const std::string& path) {
 
         v.rot[0] = getFloat(i, "rot_0");
         v.rot[1] = getFloat(i, "rot_1");
-        v.rot[2] = getFloat(i, "rot_2");
-        v.rot[3] = getFloat(i, "rot_3");
+        v.rot[2] = -getFloat(i, "rot_2");
+        v.rot[3] = -getFloat(i, "rot_3");
     }
 
     // Free blob before returning

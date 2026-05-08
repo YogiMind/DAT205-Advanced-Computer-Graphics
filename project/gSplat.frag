@@ -20,7 +20,8 @@ void main()
     float weight = exp(-0.5 * exponent);
 
     float alpha = gOpacity * weight;
-    vec3 color = gColor.rgb * alpha;
+    // vec3 color = gColor.rgb * alpha;
 
-    fragmentColor = vec4(color, alpha);
+    // fragmentColor = vec4(color, alpha);
+    fragmentColor = vec4(gColor.rgb, alpha);
 }
