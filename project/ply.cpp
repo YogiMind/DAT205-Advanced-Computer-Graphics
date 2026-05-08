@@ -1,4 +1,5 @@
 #include "ply.h"
+#include <omp.h>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -59,27 +60,27 @@ PLYModel loadPLY(const std::string& path) {
 
     // Unpack directly into GaussianVertex
     model.gaussians.resize(vertexCount);
+
+    #pragma omp parallel for schedule(static)
     for (int i = 0; i < vertexCount; i++) {
         GaussianVertex& v = model.gaussians[i];
+        const uint8_t* row = blob.data() + i * stride;
 
-        v.pos[0] = getFloat(i, "x");
-        v.pos[1] = -getFloat(i, "y");
-        v.pos[2] = -getFloat(i, "z");
-
-        v.color[0] = 0.5f + 0.2820948f * getFloat(i, "f_dc_0"); // Constants??
-        v.color[1] = 0.5f + 0.2820948f * getFloat(i, "f_dc_1");
-        v.color[2] = 0.5f + 0.2820948f * getFloat(i, "f_dc_2");
-
-        v.opacity = 1.0f / (1.0f + expf(-getFloat(i, "opacity")));
-
-        v.scale[0] = expf(getFloat(i, "scale_0"));
-        v.scale[1] = expf(getFloat(i, "scale_1"));
-        v.scale[2] = expf(getFloat(i, "scale_2"));
-
-        v.rot[0] = getFloat(i, "rot_0");
-        v.rot[1] = getFloat(i, "rot_1");
-        v.rot[2] = -getFloat(i, "rot_2");
-        v.rot[3] = -getFloat(i, "rot_3");
+        // Read directly by offset instead of hash lookup
+        v.pos[0] =  *(float*)(row + offsets["x"]);
+        v.pos[1] = -*(float*)(row + offsets["y"]);
+        v.pos[2] = -*(float*)(row + offsets["z"]);
+        v.color[0] = 0.5f + 0.2820948f * *(float*)(row + offsets["f_dc_0"]);
+        v.color[1] = 0.5f + 0.2820948f * *(float*)(row + offsets["f_dc_1"]);
+        v.color[2] = 0.5f + 0.2820948f * *(float*)(row + offsets["f_dc_2"]);
+        v.opacity = 1.0f / (1.0f + expf(-*(float*)(row + offsets["opacity"])));
+        v.scale[0] = expf(*(float*)(row + offsets["scale_0"]));
+        v.scale[1] = expf(*(float*)(row + offsets["scale_1"]));
+        v.scale[2] = expf(*(float*)(row + offsets["scale_2"]));
+        v.rot[0] =  *(float*)(row + offsets["rot_0"]);
+        v.rot[1] =  *(float*)(row + offsets["rot_1"]);
+        v.rot[2] = -*(float*)(row + offsets["rot_2"]);
+        v.rot[3] = -*(float*)(row + offsets["rot_3"]);
     }
 
     // Free blob before returning
