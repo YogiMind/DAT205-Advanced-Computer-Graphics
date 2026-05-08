@@ -1,6 +1,5 @@
 #include <GL/glew.h>
 #include <algorithm>
-#include <cstdlib>
 #include <chrono>
 
 #include <labhelper.h>
@@ -13,9 +12,6 @@
 #include <glm/gtx/transform.hpp>
 using namespace glm;
 
-#include <Model.h>
-#include "hdr.h"
-#include "fbo.h"
 
 #include "ply.h"
 
@@ -29,7 +25,6 @@ float currentTime = 0.0f;
 float previousTime = 0.0f;
 float deltaTime = 0.0f;
 int windowWidth, windowHeight;
-int frameCount = 0;
 
 // Mouse input
 ivec2 g_prevMouseCoords = { -1, -1 };
@@ -39,28 +34,15 @@ bool g_isMouseDragging = false;
 ///////////////////////////////////////////////////////////////////////////////
 // Shader programs
 ///////////////////////////////////////////////////////////////////////////////
-GLuint shaderProgram;       // Shader for rendering the final image
-GLuint backgroundProgram;
-
-GLuint splatProgram;       // Shader for rendering the final image
-
-///////////////////////////////////////////////////////////////////////////////
-// Environment
-///////////////////////////////////////////////////////////////////////////////
-float environment_multiplier = 1.5f;
-GLuint environmentMap;
-const std::string envmap_base_name = "001";
+GLuint splatProgram; // Shader program 
 
 
 ///////////////////////////////////////////////////////////////////////////////
 // Camera parameters.
 ///////////////////////////////////////////////////////////////////////////////
-vec3 cameraPosition(0.0f, 0.0f, 3.0f);
+vec3 cameraPosition(2.0f, 0.0f, 5.0f);
 vec3 cameraDirection = normalize(vec3(0.0f) - cameraPosition);
-float cameraSpeed = 10.f;
-
-vec3 prevCamDir = cameraDirection;
-vec3 prevCamPos = cameraPosition;
+float cameraSpeed = 4.f;
 
 vec3 worldUp(0.0f, 1.0f, 0.0f);
 
@@ -71,7 +53,6 @@ vec3 worldUp(0.0f, 1.0f, 0.0f);
 GLuint gaussianVAO;
 GLuint gaussianVBO;
 GLsizei gaussianCount = 0;
-PLYModel gaussianModel;
 
 std::vector<glm::vec3> gaussianPositions;
 GLuint gaussianEBO; // element buffer
@@ -80,19 +61,7 @@ std::vector<uint32_t> sortedIndices;
 
 void loadShaders(bool is_reload)
 {
-	GLuint shader = labhelper::loadShaderProgram("../project/background.vert", "../project/background.frag", is_reload);
-	if(shader != 0)
-	{
-		backgroundProgram = shader;
-	}
-
-	shader = labhelper::loadShaderProgram("../project/shading.vert", "../project/shading.frag", is_reload);
-	if(shader != 0)
-	{
-		shaderProgram = shader;
-	}
-
-	shader = labhelper::loadShaderProgram("../project/gSplat.vert", "../project/gSplat.frag", "../project/gSplat.geom", is_reload);
+	GLuint shader = labhelper::loadShaderProgram("../project/gSplat.vert", "../project/gSplat.frag", "../project/gSplat.geom", is_reload);
 	if(shader != 0)
 	{
 		splatProgram = shader;
@@ -116,12 +85,8 @@ void initialize()
 	///////////////////////////////////////////////////////////////////////
 	// Load models and set up model matrices
 	///////////////////////////////////////////////////////////////////////
+    PLYModel gaussianModel;
     gaussianModel = loadPLY("../scenes/ply/point_cloud.ply");
-
-	///////////////////////////////////////////////////////////////////////
-	// Load environment map
-	///////////////////////////////////////////////////////////////////////
-	environmentMap = labhelper::loadHdrTexture("../scenes/envmaps/" + envmap_base_name + ".hdr");
 
 
 	///////////////////////////////////////////////////////////////////////
@@ -186,7 +151,6 @@ void initialize()
             GL_DYNAMIC_DRAW); // dynamic since we update each frame
 
 
-    gaussianModel.gaussians = std::vector<GaussianVertex>(); // Free memory
     glBindVertexArray(0);
 
 	// glEnable(GL_DEPTH_TEST); // enable Z-buffering
@@ -195,16 +159,6 @@ void initialize()
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     glEnable(GL_PROGRAM_POINT_SIZE); // Point rendering
-}
-
-
-void drawBackground(const mat4& viewMatrix, const mat4& projectionMatrix)
-{
-	glUseProgram(backgroundProgram);
-	labhelper::setUniformSlow(backgroundProgram, "environment_multiplier", environment_multiplier);
-	labhelper::setUniformSlow(backgroundProgram, "inv_PV", inverse(projectionMatrix * viewMatrix));
-	labhelper::setUniformSlow(backgroundProgram, "camera_pos", cameraPosition);
-	labhelper::drawFullScreenQuad();
 }
 
 
@@ -232,16 +186,8 @@ void display(void)
 	///////////////////////////////////////////////////////////////////////////
 	// setup matrices
 	///////////////////////////////////////////////////////////////////////////
-	mat4 projMatrix = perspective(radians(45.0f), float(windowWidth) / float(windowHeight), 5.0f, 2000.0f);
+	mat4 projMatrix = perspective(radians(45.0f), float(windowWidth) / float(windowHeight), 1.f, 100.0f);
 	mat4 viewMatrix = lookAt(cameraPosition, cameraPosition + cameraDirection, worldUp);
-
-	///////////////////////////////////////////////////////////////////////////
-	// Bind the environment map(s) to unused texture units
-	///////////////////////////////////////////////////////////////////////////
-	glActiveTexture(GL_TEXTURE6);
-	glBindTexture(GL_TEXTURE_2D, environmentMap);
-	glActiveTexture(GL_TEXTURE0);
-
 
 	///////////////////////////////////////////////////////////////////////////
 	// Draw from camera
@@ -270,21 +216,25 @@ void display(void)
 
     // glDepthMask(GL_FALSE);
 
+    // Re-upload sorted indices
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gaussianEBO);
+
+    static int frameCount = 0;
+
     // Sort back to front
-    if (frameCount % 300 == 0) {
+    if ((frameCount) % 300 == 1) {
         std::sort(sortedIndices.begin(), sortedIndices.end(), [&](uint32_t a, uint32_t b) {
                 float da = glm::dot(gaussianPositions[a] - cameraPosition, cameraDirection);
                 float db = glm::dot(gaussianPositions[b] - cameraPosition, cameraDirection);
                 return da > db; // further first
                 });
+
+
+        glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0,
+                sortedIndices.size() * sizeof(uint32_t),
+                sortedIndices.data());
     }
     frameCount++;
-
-    // Re-upload sorted indices
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gaussianEBO);
-    glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0,
-            sortedIndices.size() * sizeof(uint32_t),
-            sortedIndices.data());
 
     // Draw using indices instead of glDrawArrays
     glBindVertexArray(gaussianVAO);
