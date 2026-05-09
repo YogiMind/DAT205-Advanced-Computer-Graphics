@@ -1,6 +1,7 @@
 #include <GL/glew.h>
 #include <algorithm>
 #include <chrono>
+#include <array>
 
 #include <labhelper.h>
 #include <imgui.h>
@@ -14,6 +15,7 @@ using namespace glm;
 
 
 #include "ply.h"
+#include <omp.h>
 
 
 
@@ -59,6 +61,111 @@ GLuint gaussianEBO; // element buffer
 std::vector<uint32_t> sortedIndices;
 
 
+void sortGaussians(const glm::vec3& camPos, const glm::vec3& camDir) {
+    // Compute all depths in parallel
+    std::vector<float> depths(gaussianCount);
+    #pragma omp parallel for schedule(static)
+    for (int i = 0; i < gaussianCount; i++)
+        depths[i] = dot(gaussianPositions[i] - camPos, camDir);
+
+    // Sort indices by cached depth - still single threaded but much faster
+    std::sort(sortedIndices.begin(), sortedIndices.end(), [&](uint32_t a, uint32_t b) {
+        return depths[a] > depths[b];
+    });
+}
+
+
+void radixSortGaussians(const glm::vec3& camPos, const glm::vec3& camDir) {
+    int n = gaussianCount;
+    
+    // Step 1: compute depths in parallel
+    std::vector<float> depths(n);
+    #pragma omp parallel for schedule(static)
+    for (int i = 0; i < n; i++) {
+        depths[i] = dot(gaussianPositions[i] - camPos, camDir);
+    }
+
+    // Step 2: convert to sortable uint32 keys (flip sign bit for descending)
+    // We want back-to-front so largest depth first
+    std::vector<uint32_t> keys(n);
+    #pragma omp parallel for schedule(static)
+    for (int i = 0; i < n; i++) {
+        uint32_t bits;
+        memcpy(&bits, &depths[i], sizeof(float));
+        // Flip all bits if negative, flip only sign bit if positive
+        // This makes the bit pattern sort correctly as unsigned
+        keys[i] = (bits & 0x80000000) ? ~bits : (bits ^ 0x80000000);
+        // Invert all to get descending order
+        keys[i] = ~keys[i];
+    }
+
+    // Step 3: parallel radix sort on keys, carrying sortedIndices along
+    // Use 8-bit radix (256 buckets), 4 passes for 32-bit keys
+
+    for (int pass = 0; pass < 4; pass++) {
+        int shift = pass * 8;
+
+
+        std::vector<uint32_t> counts(256);
+        std::vector<uint32_t> localOffsets(256);
+
+        for (int i = 0; i < n; i++)
+                counts[(keys[sortedIndices[i]] >> shift) & 0xFF]++;
+
+        // Positional encoding
+        for (int i = 1; i < 256; i++)
+            counts[i] += counts[i - 1];
+
+
+        std::vector<uint32_t> tempIndices(n);
+        for (int i = 0; i < n; i++) {
+            uint8_t bucket = (keys[sortedIndices[i]] >> shift) & 0xFF;
+            int globalOffset = bucket ? counts[bucket - 1] : 0;
+            tempIndices[globalOffset + localOffsets[bucket]++] = sortedIndices[i];
+        }
+        
+        std::swap(sortedIndices, tempIndices);
+    }
+}
+
+    // int numThreads = omp_get_max_threads();
+    // std::vector<std::array<uint32_t, 256>> threadCounts(numThreads);
+
+        // // Count per thread
+        // #pragma omp parallel
+        // {
+        //     int tid = omp_get_thread_num();
+        //     threadCounts[tid].fill(0);
+        //     #pragma omp for schedule(static)
+        //     for (int i = 0; i < n; i++)
+        //         threadCounts[tid][(keys[sortedIndices[i]] >> shift) & 0xFF]++;
+        // }
+
+        // Prefix sum across threads for each bucket
+        // std::array<uint32_t, 256> globalOffsets{};
+        // for (int b = 0; b < 256; b++) {
+        //     for (int t = 0; t < numThreads; t++) {
+        //         uint32_t cnt = threadCounts[t][b];
+                // threadCounts[t][b] = globalOffsets[b];
+        //         globalOffsets[b] += cnt;
+        //     }
+        // }
+        // Scatter — sequential per thread to preserve stability
+        // #pragma omp parallel
+        // {
+        //     int tid = omp_get_thread_num();
+        //     std::array<uint32_t, 256> localOffsets = threadCounts[tid];
+        //     int start, end;
+        //     // Each thread handles its own chunk
+        //     #pragma omp for schedule(static) nowait
+        //     for (int i = 0; i < n; i++) {
+        //         uint8_t bucket = (keys[sortedIndices[i]] >> shift) & 0xFF;
+        //         tempIndices[localOffsets[bucket]++] = sortedIndices[i];
+        //     }
+        // }
+
+
+
 void loadShaders(bool is_reload)
 {
 	GLuint shader = labhelper::loadShaderProgram("../project/gSplat.vert", "../project/gSplat.frag", "../project/gSplat.geom", is_reload);
@@ -86,7 +193,11 @@ void initialize()
 	// Load models and set up model matrices
 	///////////////////////////////////////////////////////////////////////
     PLYModel gaussianModel;
-    gaussianModel = loadPLY("../scenes/ply/point_cloud.ply");
+    gaussianModel = loadPLY("../scenes/ply/truck_scene.ply");
+    // gaussianModel = loadPLY("../scenes/ply/3DGS_PLY_sample_data/PLY(postshot)/cactus_splat3_25kSteps_2M_splats.ply");
+    // gaussianModel = loadPLY("../scenes/ply/drift_scene.ply");
+    // gaussianModel = loadPLY("../scenes/ply/tree_scene.ply");
+    // gaussianModel = loadPLY("../scenes/ply/iron_age_roundhouse_scene.ply");
 
 
 	///////////////////////////////////////////////////////////////////////
@@ -186,7 +297,7 @@ void display(void)
 	///////////////////////////////////////////////////////////////////////////
 	// setup matrices
 	///////////////////////////////////////////////////////////////////////////
-	mat4 projMatrix = perspective(radians(45.0f), float(windowWidth) / float(windowHeight), 1.f, 100.0f);
+	mat4 projMatrix = perspective(radians(45.0f), float(windowWidth) / float(windowHeight), 1.f, 300.0f);
 	mat4 viewMatrix = lookAt(cameraPosition, cameraPosition + cameraDirection, worldUp);
 
 	///////////////////////////////////////////////////////////////////////////
@@ -220,16 +331,19 @@ void display(void)
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gaussianEBO);
 
     static int frameCount = 0;
+    static glm::vec3 lastSortPos(1e9f);
+    static glm::vec3 lastSortDir(0);
 
-    // Sort back to front
-    if ((frameCount) % 300 == 1) {
-        std::sort(sortedIndices.begin(), sortedIndices.end(), [&](uint32_t a, uint32_t b) {
-                float da = glm::dot(gaussianPositions[a] - cameraPosition, cameraDirection);
-                float db = glm::dot(gaussianPositions[b] - cameraPosition, cameraDirection);
-                return da > db; // further first
-                });
+    float posDelta = glm::length(cameraPosition - lastSortPos);
+    float dirDelta = glm::dot(cameraDirection, lastSortDir);
 
+    if (frameCount > 10 && (posDelta > 5.f || dirDelta > .5f)) {
+        frameCount = 0;
+        radixSortGaussians(cameraPosition, cameraDirection);
+        lastSortPos = cameraPosition;
+        lastSortDir = cameraDirection;
 
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gaussianEBO);
         glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0,
                 sortedIndices.size() * sizeof(uint32_t),
                 sortedIndices.data());
@@ -239,10 +353,6 @@ void display(void)
     // Draw using indices instead of glDrawArrays
     glBindVertexArray(gaussianVAO);
     glDrawElements(GL_POINTS, gaussianCount, GL_UNSIGNED_INT, 0);
-
-    // glBindVertexArray(gaussianVAO);
-    //
-    // glDrawArrays(GL_POINTS, 0, gaussianCount);
 
     // glDepthMask(GL_TRUE);
 
