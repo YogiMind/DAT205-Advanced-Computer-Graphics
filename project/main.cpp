@@ -27,6 +27,9 @@ float currentTime = 0.0f;
 float previousTime = 0.0f;
 float deltaTime = 0.0f;
 int windowWidth, windowHeight;
+int sh_degree = 3;
+
+static float sortTimeMs = 0.0f;
 
 // Mouse input
 ivec2 g_prevMouseCoords = { -1, -1 };
@@ -61,21 +64,12 @@ GLuint gaussianEBO; // element buffer
 std::vector<glm::vec3> gaussianPositions;
 std::vector<uint32_t> sortedIndices;
 
+std::vector<uint32_t> visibleIndices;
+GLsizei visibleCount = 0;
+
 GLuint shRestBuffer;  // the buffer
 GLuint shRestTex;     // the texture handle
 
-void sortGaussians(const glm::vec3& camPos, const glm::vec3& camDir) {
-    // Compute all depths in parallel
-    std::vector<float> depths(gaussianCount);
-    #pragma omp parallel for schedule(static)
-    for (int i = 0; i < gaussianCount; i++)
-        depths[i] = dot(gaussianPositions[i] - camPos, camDir);
-
-    // Sort indices by cached depth - still single threaded but much faster
-    std::sort(sortedIndices.begin(), sortedIndices.end(), [&](uint32_t a, uint32_t b) {
-        return depths[a] > depths[b];
-    });
-}
 
 void radixSortGaussians(const glm::vec3& camPos, const glm::vec3& camDir) {
     int n = gaussianCount;
@@ -140,7 +134,6 @@ void radixSortGaussians(const glm::vec3& camPos, const glm::vec3& camDir) {
         std::swap(sortedIndices, tempIndices);
     }
 }
-
 
 
 
@@ -220,10 +213,12 @@ void initialize()
 
     // After uploading the VBO:
     // Pack f_rest into a flat buffer: [g0_rest0..g0_rest44, g1_rest0..g1_rest44, ...]
+    gaussianCount = (GLsizei)gaussianModel.gaussians.size();
     std::vector<float> restData(gaussianCount * 45);
-    for (int i = 0; i < gaussianCount; i++)
+    for (int i = 0; i < gaussianCount; i++) {
         for (int j = 0; j < 45; j++)
             restData[i * 45 + j] = gaussianModel.gaussians[i].f_rest[j];
+    }
 
     glGenBuffers(1, &shRestBuffer);
     glBindBuffer(GL_TEXTURE_BUFFER, shRestBuffer);
@@ -234,7 +229,6 @@ void initialize()
     glTexBuffer(GL_TEXTURE_BUFFER, GL_R32F, shRestBuffer); // one float per texel
 
 
-    gaussianCount = (GLsizei)gaussianModel.gaussians.size();
     gaussianPositions.resize(gaussianCount);
     for (int i = 0; i < gaussianCount; i++) {
         gaussianPositions[i] = glm::vec3(
@@ -256,11 +250,8 @@ void initialize()
 
     glBindVertexArray(0);
 
-
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-    glEnable(GL_PROGRAM_POINT_SIZE); // Point rendering
 }
 
 
@@ -311,26 +302,21 @@ void display(void)
 	labhelper::setUniformSlow(splatProgram, "viewportWidth", windowWidth);
 	labhelper::setUniformSlow(splatProgram, "viewportHeight", windowHeight);
 	labhelper::setUniformSlow(splatProgram, "cameraPos", cameraPosition);
+	labhelper::setUniformSlow(splatProgram, "sh_degree", sh_degree);
 
     // Re-upload sorted indices
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gaussianEBO);
 
-    static glm::vec3 lastSortPos(1e9f);
-    static glm::vec3 lastSortDir(0);
+    auto t0 = std::chrono::high_resolution_clock::now();
+    radixSortGaussians(cameraPosition, cameraDirection);
+    auto t1 = std::chrono::high_resolution_clock::now();
+    sortTimeMs = std::chrono::duration<float, std::milli>(t1 - t0).count();
 
-    float posDelta = glm::length(cameraPosition - lastSortPos);
-    float dirDelta = glm::dot(cameraDirection, lastSortDir);
 
-    // if (posDelta > 10.f || dirDelta > .5f) {
-        radixSortGaussians(cameraPosition, cameraDirection);
-        lastSortPos = cameraPosition;
-        lastSortDir = cameraDirection;
-
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gaussianEBO);
-        glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0,
-                sortedIndices.size() * sizeof(uint32_t),
-                sortedIndices.data());
-    // }
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gaussianEBO);
+    glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0,
+            sortedIndices.size() * sizeof(uint32_t),
+            sortedIndices.data());
 
     // Load f_rest to texture buffer
     glActiveTexture(GL_TEXTURE0);
@@ -439,11 +425,30 @@ bool handleEvents(void)
 ///////////////////////////////////////////////////////////////////////////////
 void gui()
 {
-	// ----------------- Set variables --------------------------
-	ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate,
-	            ImGui::GetIO().Framerate);
-	// ----------------------------------------------------------
-
+	// // ----------------- Set variables --------------------------
+	// ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate,
+	//             ImGui::GetIO().Framerate);
+	// // ----------------------------------------------------------
+    ImGui::Begin("Stats");
+    
+    ImGui::Text("FPS: %.1f (%.2f ms/frame)",
+        ImGui::GetIO().Framerate,
+        1000.0f / ImGui::GetIO().Framerate);
+    
+    ImGui::Separator();
+    ImGui::Text("Gaussians total:   %d", gaussianCount);
+    ImGui::Text("Sort time:         %.2f ms", sortTimeMs);
+    
+    ImGui::Separator();
+    ImGui::Text("Camera pos: (%.2f, %.2f, %.2f)",
+        cameraPosition.x, cameraPosition.y, cameraPosition.z);
+    
+    ImGui::SliderFloat("Camera speed", &cameraSpeed, 0.1f, 50.0f);
+    ImGui::SliderInt("SH degree", &sh_degree, 0, 3);
+    
+    ImGui::End();
+    
+    labhelper::perf::drawEventsWindow();
 
 	////////////////////////////////////////////////////////////////////////////////
 	////////////////////////////////////////////////////////////////////////////////

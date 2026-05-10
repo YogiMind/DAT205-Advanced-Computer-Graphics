@@ -72,13 +72,27 @@ void main()
     // Project center
     vec4 center_screen = projectionMatrix * p_view;
 
+    // get eigenvalues and compute oriented quad
+    float a = cov_pixels[0][0], b = cov_pixels[0][1], d = cov_pixels[1][1];
+    float trace = a + d;
+    float det = a*d - b*b;
+    float sqrtTerm = sqrt(max(0.0, trace*trace*0.25 - det));
+    float lambda1 = trace*0.5 + sqrtTerm;
+    float lambda2 = trace*0.5 - sqrtTerm;
+    float r1 = 3.0 * sqrt(abs(lambda1));
+    float r2 = 3.0 * sqrt(abs(lambda2));
+
+    vec2 axis = (abs(b) < 1e-6) ? vec2(1,0) : normalize(vec2(b, lambda1 - a));
+    vec2 perp = vec2(-axis.y, axis.x);
+
     // Quad
-    vec2 offsets[4] = vec2[](
-        vec2(-1, -1),
-        vec2( 1, -1),
-        vec2(-1,  1),
-        vec2( 1,  1)
-    );
+    vec2 corners[4] = vec2[](
+            -axis*r1 - perp*r2,
+            axis*r1 - perp*r2,
+            -axis*r1 + perp*r2,
+            axis*r1 + perp*r2
+            );
+
 
     gColor = vColor[0];
     gOpacity = opacity;
@@ -86,7 +100,7 @@ void main()
 
     for(int i = 0; i < 4; i++)
     {
-        vec2 pixelOffset = offsets[i] * r;
+        vec2 pixelOffset = corners[i];
         gPixelOffset = pixelOffset;
 
         // convert pixel offset to NDC offset
