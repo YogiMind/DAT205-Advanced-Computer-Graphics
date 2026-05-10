@@ -171,9 +171,9 @@ void initialize()
 	// Load models and set up model matrices
 	///////////////////////////////////////////////////////////////////////
     PLYModel gaussianModel;
-    // gaussianModel = loadPLY("../scenes/ply/truck_scene.ply");
+    gaussianModel = loadPLY("../scenes/ply/truck_scene.ply");
     // gaussianModel = loadPLY("../scenes/ply/3DGS_PLY_sample_data/PLY(postshot)/cactus_splat3_25kSteps_2M_splats.ply");
-    gaussianModel = loadPLY("../scenes/ply/drift_scene.ply");
+    // gaussianModel = loadPLY("../scenes/ply/drift_scene.ply");
     // gaussianModel = loadPLY("../scenes/ply/tree_scene.ply");
     // gaussianModel = loadPLY("../scenes/ply/iron_age_roundhouse_scene.ply");
 
@@ -256,7 +256,6 @@ void initialize()
 
     glBindVertexArray(0);
 
-	// glEnable(GL_DEPTH_TEST); // enable Z-buffering
 
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -289,9 +288,7 @@ void display(void)
 	///////////////////////////////////////////////////////////////////////////
 	// setup matrices
 	///////////////////////////////////////////////////////////////////////////
-	mat4 projMatrix = perspective(radians(45.0f), float(windowWidth) / float(windowHeight), 1.f, 300.0f);
-	// mat4 projMatrix = perspective(radians(45.0f), float(windowWidth) / float(windowHeight), 2.4f, 300.0f);
-	// mat4 projMatrix = perspective(radians(45.0f), float(windowWidth) / float(windowHeight), 15.f, 300.0f);
+	mat4 projMatrix = perspective(radians(45.0f), float(windowWidth) / float(windowHeight), 1.f, 1000.0f);
 	mat4 viewMatrix = lookAt(cameraPosition, cameraPosition + cameraDirection, worldUp);
 
 	///////////////////////////////////////////////////////////////////////////
@@ -302,16 +299,11 @@ void display(void)
 	glViewport(0, 0, windowWidth, windowHeight);
 	glClearColor(0.f, 0.f, 0.f, 1.0f);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-	//
-	// {
-	// 	labhelper::perf::Scope s( "Background" );
-	// 	drawBackground(viewMatrix, projMatrix);
-	// }
-
 
 	///////////////////////////////////////////////////////////////////////////
 	// Draw Gaussians
 	///////////////////////////////////////////////////////////////////////////
+
 	glUseProgram(splatProgram);
     
 	labhelper::setUniformSlow(splatProgram, "projectionMatrix", projMatrix);
@@ -319,8 +311,6 @@ void display(void)
 	labhelper::setUniformSlow(splatProgram, "viewportWidth", windowWidth);
 	labhelper::setUniformSlow(splatProgram, "viewportHeight", windowHeight);
 	labhelper::setUniformSlow(splatProgram, "cameraPos", cameraPosition);
-
-    // glDepthMask(GL_FALSE);
 
     // Re-upload sorted indices
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gaussianEBO);
@@ -331,7 +321,7 @@ void display(void)
     float posDelta = glm::length(cameraPosition - lastSortPos);
     float dirDelta = glm::dot(cameraDirection, lastSortDir);
 
-    if (posDelta > 10.f || dirDelta > .5f) {
+    // if (posDelta > 10.f || dirDelta > .5f) {
         radixSortGaussians(cameraPosition, cameraDirection);
         lastSortPos = cameraPosition;
         lastSortDir = cameraDirection;
@@ -340,7 +330,7 @@ void display(void)
         glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0,
                 sortedIndices.size() * sizeof(uint32_t),
                 sortedIndices.data());
-    }
+    // }
 
     // Load f_rest to texture buffer
     glActiveTexture(GL_TEXTURE0);
@@ -350,8 +340,6 @@ void display(void)
     // Draw using indices instead of glDrawArrays
     glBindVertexArray(gaussianVAO);
     glDrawElements(GL_POINTS, gaussianCount, GL_UNSIGNED_INT, 0);
-
-    // glDepthMask(GL_TRUE);
 
 }
 

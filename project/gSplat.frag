@@ -1,21 +1,15 @@
 #version 420
 
-in vec2 gUV;
-flat in vec2 gCenter;
 flat in vec4 gColor;
 flat in float gOpacity;
 flat in mat2 invCov;
-flat in float gMaxRadius;
+in vec2 gPixelOffset;
 
 out vec4 fragmentColor;
 
 void main()
 {
-    vec2 d = (gl_FragCoord.xy - gCenter);
-    // cheap radius check before matrix multiply
-    // if (dot(d, d) > 9.0 * gMaxRadius * gMaxRadius) discard;
-
-    float exponent = dot(d, invCov * d);
+    float exponent = dot(gPixelOffset, invCov * gPixelOffset);
     if (exponent > 9.0) discard;
 
     float weight = exp(-0.5 * exponent);
