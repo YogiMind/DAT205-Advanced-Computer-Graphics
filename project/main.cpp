@@ -54,12 +54,15 @@ vec3 worldUp(0.0f, 1.0f, 0.0f);
 ///////////////////////////////////////////////////////////////////////////////
 GLuint gaussianVAO;
 GLuint gaussianVBO;
+GLuint ssbo;
 GLsizei gaussianCount = 0;
 
-std::vector<glm::vec3> gaussianPositions;
 GLuint gaussianEBO; // element buffer
+std::vector<glm::vec3> gaussianPositions;
 std::vector<uint32_t> sortedIndices;
 
+GLuint shRestBuffer;  // the buffer
+GLuint shRestTex;     // the texture handle
 
 void sortGaussians(const glm::vec3& camPos, const glm::vec3& camDir) {
     // Compute all depths in parallel
@@ -168,9 +171,9 @@ void initialize()
 	// Load models and set up model matrices
 	///////////////////////////////////////////////////////////////////////
     PLYModel gaussianModel;
-    gaussianModel = loadPLY("../scenes/ply/truck_scene.ply");
+    // gaussianModel = loadPLY("../scenes/ply/truck_scene.ply");
     // gaussianModel = loadPLY("../scenes/ply/3DGS_PLY_sample_data/PLY(postshot)/cactus_splat3_25kSteps_2M_splats.ply");
-    // gaussianModel = loadPLY("../scenes/ply/drift_scene.ply");
+    gaussianModel = loadPLY("../scenes/ply/drift_scene.ply");
     // gaussianModel = loadPLY("../scenes/ply/tree_scene.ply");
     // gaussianModel = loadPLY("../scenes/ply/iron_age_roundhouse_scene.ply");
 
@@ -193,12 +196,12 @@ void initialize()
     // pos: location 0, 3 floats
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(GaussianVertex),
-                          (void*)offsetof(GaussianVertex, pos));
+                          (void*)offsetof(GaussianVertex, x));
 
     // color: location 1, 3 floats
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(GaussianVertex),
-                          (void*)offsetof(GaussianVertex, color));
+                          (void*)offsetof(GaussianVertex, f_dc));
 
     // opacity: location 2, 1 float
     glEnableVertexAttribArray(2);
@@ -215,15 +218,29 @@ void initialize()
     glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, sizeof(GaussianVertex),
                           (void*)offsetof(GaussianVertex, rot));
 
+    // After uploading the VBO:
+    // Pack f_rest into a flat buffer: [g0_rest0..g0_rest44, g1_rest0..g1_rest44, ...]
+    std::vector<float> restData(gaussianCount * 45);
+    for (int i = 0; i < gaussianCount; i++)
+        for (int j = 0; j < 45; j++)
+            restData[i * 45 + j] = gaussianModel.gaussians[i].f_rest[j];
+
+    glGenBuffers(1, &shRestBuffer);
+    glBindBuffer(GL_TEXTURE_BUFFER, shRestBuffer);
+    glBufferData(GL_TEXTURE_BUFFER, restData.size() * sizeof(float), restData.data(), GL_STATIC_DRAW);
+
+    glGenTextures(1, &shRestTex);
+    glBindTexture(GL_TEXTURE_BUFFER, shRestTex);
+    glTexBuffer(GL_TEXTURE_BUFFER, GL_R32F, shRestBuffer); // one float per texel
 
 
     gaussianCount = (GLsizei)gaussianModel.gaussians.size();
     gaussianPositions.resize(gaussianCount);
     for (int i = 0; i < gaussianCount; i++) {
         gaussianPositions[i] = glm::vec3(
-                gaussianModel.gaussians[i].pos[0],
-                gaussianModel.gaussians[i].pos[1],
-                gaussianModel.gaussians[i].pos[2]);
+                gaussianModel.gaussians[i].x,
+                gaussianModel.gaussians[i].y,
+                gaussianModel.gaussians[i].z);
     }
 
     sortedIndices.resize(gaussianCount);
@@ -273,6 +290,8 @@ void display(void)
 	// setup matrices
 	///////////////////////////////////////////////////////////////////////////
 	mat4 projMatrix = perspective(radians(45.0f), float(windowWidth) / float(windowHeight), 1.f, 300.0f);
+	// mat4 projMatrix = perspective(radians(45.0f), float(windowWidth) / float(windowHeight), 2.4f, 300.0f);
+	// mat4 projMatrix = perspective(radians(45.0f), float(windowWidth) / float(windowHeight), 15.f, 300.0f);
 	mat4 viewMatrix = lookAt(cameraPosition, cameraPosition + cameraDirection, worldUp);
 
 	///////////////////////////////////////////////////////////////////////////
@@ -299,6 +318,7 @@ void display(void)
 	labhelper::setUniformSlow(splatProgram, "viewMatrix", viewMatrix);
 	labhelper::setUniformSlow(splatProgram, "viewportWidth", windowWidth);
 	labhelper::setUniformSlow(splatProgram, "viewportHeight", windowHeight);
+	labhelper::setUniformSlow(splatProgram, "cameraPos", cameraPosition);
 
     // glDepthMask(GL_FALSE);
 
@@ -321,6 +341,11 @@ void display(void)
                 sortedIndices.size() * sizeof(uint32_t),
                 sortedIndices.data());
     }
+
+    // Load f_rest to texture buffer
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_BUFFER, shRestTex);
+    labhelper::setUniformSlow(splatProgram, "shRestData", 0); // texture unit 0
 
     // Draw using indices instead of glDrawArrays
     glBindVertexArray(gaussianVAO);

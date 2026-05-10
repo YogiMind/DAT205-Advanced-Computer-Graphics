@@ -11,8 +11,9 @@ struct Gaussian {
 };
 
 struct GaussianVertex {
-    float pos[3];
-    float color[3];
+    float x, y, z;
+    float f_dc[3];
+    float f_rest[45];
     float opacity;
     float scale[3];
     float rot[4];

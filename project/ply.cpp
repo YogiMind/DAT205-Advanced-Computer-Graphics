@@ -6,6 +6,7 @@
 #include <cstring>
 #include <fstream>
 #include <stdexcept>
+#include <string>
 #include <unordered_map>
 
 PLYModel loadPLY(const std::string& path) {
@@ -58,6 +59,12 @@ PLYModel loadPLY(const std::string& path) {
         return val;
     };
 
+    int off_rest[45];
+    for (int i = 0; i < 45; i++) {
+        auto it = offsets.find("f_rest_" + std::to_string(i));
+        off_rest[i] = (it != offsets.end()) ? it->second : -1;
+    }
+
     // Unpack directly into GaussianVertex
     model.gaussians.resize(vertexCount);
 
@@ -65,18 +72,26 @@ PLYModel loadPLY(const std::string& path) {
     for (int i = 0; i < vertexCount; i++) {
         GaussianVertex& v = model.gaussians[i];
         const uint8_t* row = blob.data() + i * stride;
-
+        // 0.5f + 0.2820948f
         // Read directly by offset instead of hash lookup
-        v.pos[0] =  *(float*)(row + offsets["x"]);
-        v.pos[1] = -*(float*)(row + offsets["y"]);
-        v.pos[2] = -*(float*)(row + offsets["z"]);
-        v.color[0] = 0.5f + 0.2820948f * *(float*)(row + offsets["f_dc_0"]);
-        v.color[1] = 0.5f + 0.2820948f * *(float*)(row + offsets["f_dc_1"]);
-        v.color[2] = 0.5f + 0.2820948f * *(float*)(row + offsets["f_dc_2"]);
+        v.x =  *(float*)(row + offsets["x"]);
+        v.y = -*(float*)(row + offsets["y"]);
+        v.z = -*(float*)(row + offsets["z"]);
+
+        v.f_dc[0] = *(float*)(row + offsets["f_dc_0"]);
+        v.f_dc[1] = *(float*)(row + offsets["f_dc_1"]);
+        v.f_dc[2] = *(float*)(row + offsets["f_dc_2"]);
+
+        for (int i = 0; i < 45; i++) {
+            v.f_rest[i] = (off_rest[i] >= 0) ? *(float*)(row + off_rest[i]) : 0.0f;
+        }
+
         v.opacity = 1.0f / (1.0f + expf(-*(float*)(row + offsets["opacity"])));
+
         v.scale[0] = expf(*(float*)(row + offsets["scale_0"]));
         v.scale[1] = expf(*(float*)(row + offsets["scale_1"]));
         v.scale[2] = expf(*(float*)(row + offsets["scale_2"]));
+
         v.rot[0] =  *(float*)(row + offsets["rot_0"]);
         v.rot[1] =  *(float*)(row + offsets["rot_1"]);
         v.rot[2] = -*(float*)(row + offsets["rot_2"]);
