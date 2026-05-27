@@ -10,7 +10,7 @@ out vec4 fragmentColor;
 void main()
 {
     float exponent = dot(gPixelOffset, invCov * gPixelOffset);
-    if (exponent > 9.0) discard;
+    if (exponent > 9.0) discard; // discard when weight would be > 0.011 (about a 1% contribution)
 
     float weight = exp(-0.5 * exponent);
     float alpha = gOpacity * weight;

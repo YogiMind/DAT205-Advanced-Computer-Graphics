@@ -6,11 +6,11 @@
 #include <labhelper.h>
 #include <imgui.h>
 
-#include <numeric>
 #include <perf.h>
 
 #include <glm/glm.hpp>
 #include <glm/gtx/transform.hpp>
+#include <vector>
 using namespace glm;
 
 
@@ -30,11 +30,17 @@ int windowWidth, windowHeight;
 int sh_degree = 3;
 
 static float sortTimeMs = 0.0f;
+static float drawTimeMs = 0.0f;
 
 // Mouse input
 ivec2 g_prevMouseCoords = { -1, -1 };
 bool g_isMouseDragging = false;
 
+// frustum culling
+bool enableFrustumCulling = true;
+
+std::vector<uint32_t> visibleIndices;
+GLsizei visibleCount = 0;
 
 ///////////////////////////////////////////////////////////////////////////////
 // Shader programs
@@ -57,22 +63,47 @@ vec3 worldUp(0.0f, 1.0f, 0.0f);
 ///////////////////////////////////////////////////////////////////////////////
 GLuint gaussianVAO;
 GLuint gaussianVBO;
-GLuint ssbo;
 GLsizei gaussianCount = 0;
 
 GLuint gaussianEBO; // element buffer
 std::vector<glm::vec3> gaussianPositions;
 std::vector<uint32_t> sortedIndices;
 
-std::vector<uint32_t> visibleIndices;
-GLsizei visibleCount = 0;
-
 GLuint shRestBuffer;  // the buffer
 GLuint shRestTex;     // the texture handle
 
 
-void radixSortGaussians(const glm::vec3& camPos, const glm::vec3& camDir) {
-    int n = gaussianCount;
+
+int frustumCull(mat4 viewProjMatrix) {
+    int count = 0;
+
+    #pragma omp parallel for schedule(static)
+    for (int i = 0; i < gaussianCount; i++) {
+        vec4 clipPos = viewProjMatrix * vec4(gaussianPositions[i], 1);
+
+        if (clipPos.w <= 0.0f) continue;
+        float invW = 1.0 / clipPos.w;
+        float x = clipPos.x * invW;
+        float y = clipPos.y * invW;
+        float z = clipPos.z * invW;
+        float margin = 1.2f; // small margin to avoid popping at edges. Maybe find size with cov matrix?
+
+        if (x < -margin || x > margin
+         || y < -margin || y > margin
+         || z < -1.0f || z > 1.0f)
+            continue;
+
+        int idx;
+        #pragma omp atomic capture
+        idx = count++;
+
+        visibleIndices[idx] = i;
+    }
+
+    return count;
+}
+
+void radixSortGaussians(const glm::vec3& camPos, const glm::vec3& camDir, int n) {
     int numThreads = omp_get_max_threads();
 
     std::vector<float>    depths(n);
@@ -83,7 +114,7 @@ void radixSortGaussians(const glm::vec3& camPos, const glm::vec3& camDir) {
     // Step 1: compute depths
     #pragma omp parallel for schedule(static)
     for (int i = 0; i < n; i++)
-        depths[i] = glm::dot(gaussianPositions[i] - camPos, camDir);
+        depths[i] = glm::dot(gaussianPositions[visibleIndices[i]] - camPos, camDir);
 
     // Step 2: float -> sortable descending uint32 key
     #pragma omp parallel for schedule(static)
@@ -94,6 +125,7 @@ void radixSortGaussians(const glm::vec3& camPos, const glm::vec3& camDir) {
     }
 
     // Step 3: 4-pass radix sort
+    std::vector<uint32_t> keyTemp(n);
     for (int pass = 0; pass < 4; pass++) {
         int shift = pass * 8;
 
@@ -104,7 +136,7 @@ void radixSortGaussians(const glm::vec3& camPos, const glm::vec3& camDir) {
             threadCounts[tid].fill(0);
             #pragma omp for schedule(static)
             for (int i = 0; i < n; i++)
-                threadCounts[tid][(keys[sortedIndices[i]] >> shift) & 0xFF]++;
+                threadCounts[tid][(keys[i] >> shift) & 0xFF]++;
         }
 
         // Prefix sum: compute where each thread's chunk starts per bucket
@@ -126,12 +158,15 @@ void radixSortGaussians(const glm::vec3& camPos, const glm::vec3& camDir) {
 
             #pragma omp for schedule(static) nowait
             for (int i = 0; i < n; i++) {
-                uint8_t bucket = (keys[sortedIndices[i]] >> shift) & 0xFF;
-                tempIndices[offsets[bucket]++] = sortedIndices[i];
+                uint8_t bucket = (keys[i] >> shift) & 0xFF;
+                uint32_t dst = offsets[bucket]++;
+                tempIndices[dst] = visibleIndices[i];
+                keyTemp[dst] = keys[i];
             }
         }
 
-        std::swap(sortedIndices, tempIndices);
+        std::swap(visibleIndices, tempIndices);
+        std::swap(keys, keyTemp);
     }
 }
 
@@ -165,7 +200,7 @@ void initialize()
 	///////////////////////////////////////////////////////////////////////
     PLYModel gaussianModel;
     gaussianModel = loadPLY("../scenes/ply/truck_scene.ply");
-    // gaussianModel = loadPLY("../scenes/ply/3DGS_PLY_sample_data/PLY(postshot)/cactus_splat3_25kSteps_2M_splats.ply");
+    // gaussianModel = loadPLY("../scenes/ply/3DGS_PLY_sample_data/PLY(postshot)/cactus_splat3_11kSteps_1.5M_splats.ply");
     // gaussianModel = loadPLY("../scenes/ply/drift_scene.ply");
     // gaussianModel = loadPLY("../scenes/ply/tree_scene.ply");
     // gaussianModel = loadPLY("../scenes/ply/iron_age_roundhouse_scene.ply");
@@ -237,14 +272,13 @@ void initialize()
                 gaussianModel.gaussians[i].z);
     }
 
-    sortedIndices.resize(gaussianCount);
-    std::iota(sortedIndices.begin(), sortedIndices.end(), 0);
+    visibleIndices.resize(gaussianCount);
 
     glGenBuffers(1, &gaussianEBO);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gaussianEBO);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER,
-            sortedIndices.size() * sizeof(uint32_t),
-            sortedIndices.data(),
+            gaussianCount * sizeof(uint32_t),
+            visibleIndices.data(),
             GL_DYNAMIC_DRAW); // dynamic since we update each frame
 
 
@@ -281,6 +315,7 @@ void display(void)
 	///////////////////////////////////////////////////////////////////////////
 	mat4 projMatrix = perspective(radians(45.0f), float(windowWidth) / float(windowHeight), 1.f, 1000.0f);
 	mat4 viewMatrix = lookAt(cameraPosition, cameraPosition + cameraDirection, worldUp);
+    mat4 viewProjMatrix = projMatrix * viewMatrix;
 
 	///////////////////////////////////////////////////////////////////////////
 	// Draw from camera
@@ -307,16 +342,33 @@ void display(void)
     // Re-upload sorted indices
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gaussianEBO);
 
-    auto t0 = std::chrono::high_resolution_clock::now();
-    radixSortGaussians(cameraPosition, cameraDirection);
-    auto t1 = std::chrono::high_resolution_clock::now();
-    sortTimeMs = std::chrono::duration<float, std::milli>(t1 - t0).count();
+    if (enableFrustumCulling) {
+        visibleCount = frustumCull(viewProjMatrix);
 
+        auto t0 = std::chrono::high_resolution_clock::now();
+        radixSortGaussians(cameraPosition, cameraDirection, visibleCount);
+        auto t1 = std::chrono::high_resolution_clock::now();
+        sortTimeMs = std::chrono::duration<float, std::milli>(t1 - t0).count();
+
+    } else {
+
+        visibleCount = gaussianCount;
+
+        #pragma omp parallel for schedule(static)
+        for (int i = 0; i < gaussianCount; i++) {
+            visibleIndices[i] = i;
+        }
+
+        auto t0 = std::chrono::high_resolution_clock::now();
+        radixSortGaussians(cameraPosition, cameraDirection, visibleCount);
+        auto t1 = std::chrono::high_resolution_clock::now();
+        sortTimeMs = std::chrono::duration<float, std::milli>(t1 - t0).count();
+    }
 
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gaussianEBO);
     glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0,
-            sortedIndices.size() * sizeof(uint32_t),
-            sortedIndices.data());
+            visibleCount * sizeof(uint32_t),
+            visibleIndices.data());
 
     // Load f_rest to texture buffer
     glActiveTexture(GL_TEXTURE0);
@@ -325,7 +377,11 @@ void display(void)
 
     // Draw using indices instead of glDrawArrays
     glBindVertexArray(gaussianVAO);
-    glDrawElements(GL_POINTS, gaussianCount, GL_UNSIGNED_INT, 0);
+
+    auto t0 = std::chrono::high_resolution_clock::now();
+    glDrawElements(GL_POINTS, visibleCount, GL_UNSIGNED_INT, 0);
+    auto t1 = std::chrono::high_resolution_clock::now();
+    drawTimeMs = std::chrono::duration<float, std::milli>(t1 - t0).count();
 
 }
 
@@ -437,19 +493,19 @@ void gui()
     
     ImGui::Separator();
     ImGui::Text("Gaussians total:   %d", gaussianCount);
+    ImGui::Text("Gaussians visible: %d (%.1f%%)", visibleCount, 100.0f * visibleCount / (float)gaussianCount);
     ImGui::Text("Sort time:         %.2f ms", sortTimeMs);
-    
+    ImGui::Text("Draw time:         %.2f ms", drawTimeMs);
     ImGui::Separator();
     ImGui::Text("Camera pos: (%.2f, %.2f, %.2f)",
         cameraPosition.x, cameraPosition.y, cameraPosition.z);
-    
+
+    ImGui::Checkbox("Frustum culling", &enableFrustumCulling);
     ImGui::SliderFloat("Camera speed", &cameraSpeed, 0.1f, 50.0f);
     ImGui::SliderInt("SH degree", &sh_degree, 0, 3);
     
     ImGui::End();
     
-    labhelper::perf::drawEventsWindow();
-
 	////////////////////////////////////////////////////////////////////////////////
 	////////////////////////////////////////////////////////////////////////////////
 

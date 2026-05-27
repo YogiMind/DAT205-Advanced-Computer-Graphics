@@ -38,7 +38,7 @@ float getRest(int gaussianIdx, int coeffIdx) {
 }
 
 vec3 evaluateSH(vec3 dir, vec3 dc, int idx) {
-    float x = dir.x, y = -dir.y, z = -dir.z;
+    float x = dir.x, y = -dir.y, z = -dir.z; // Coordinate system correction
 
     // Degree 0
     vec3 col = SH_C0 * dc;
