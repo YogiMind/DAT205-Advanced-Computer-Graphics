@@ -46,6 +46,8 @@ void main()
     float fx = projectionMatrix[0][0];
     float fy = projectionMatrix[1][1];
 
+    // u = fx * x / z, v = fy * y / z
+    // calculate J from u and v by partial derivations
     mat3x2 J = transpose(mat2x3(
         fx / z, 0.0, -fx * x / (z * z),
         0.0, fy / z, -fy * y / (z * z)
@@ -65,7 +67,7 @@ void main()
 
     float r = 3.0 * sqrt(max(cov_pixels[0][0], cov_pixels[1][1]));
     if (r > min(vp.x, vp.y) * 2.0) return; // cull if larger than screen
-    if (determinant(cov_pixels) < 1e-5) return;
+    if (determinant(cov_pixels) < 1e-5) return; // if really small
 
     mat2 cov_inverse = inverse(cov_pixels);
 
@@ -79,7 +81,10 @@ void main()
     float sqrtTerm = sqrt(max(0.0, trace*trace*0.25 - det));
     float lambda1 = trace*0.5 + sqrtTerm;
     float lambda2 = trace*0.5 - sqrtTerm;
-    float r1 = 3.0 * sqrt(abs(lambda1));
+
+    // Lambda = variance, so sqrt(lambda) = standard dev.
+    // 3 std. dev. matches the frag culling for exp > 9
+    float r1 = 3.0 * sqrt(abs(lambda1)); 
     float r2 = 3.0 * sqrt(abs(lambda2));
 
     vec2 axis = (abs(b) < 1e-6) ? vec2(1,0) : normalize(vec2(b, lambda1 - a));

@@ -27,7 +27,6 @@ float currentTime = 0.0f;
 float previousTime = 0.0f;
 float deltaTime = 0.0f;
 int windowWidth, windowHeight;
-int sh_degree = 3;
 
 static float sortTimeMs = 0.0f;
 static float drawTimeMs = 0.0f;
@@ -38,9 +37,6 @@ bool g_isMouseDragging = false;
 
 // frustum culling
 bool enableFrustumCulling = true;
-
-std::vector<uint32_t> visibleIndices;
-GLsizei visibleCount = 0;
 
 ///////////////////////////////////////////////////////////////////////////////
 // Shader programs
@@ -64,13 +60,15 @@ vec3 worldUp(0.0f, 1.0f, 0.0f);
 GLuint gaussianVAO;
 GLuint gaussianVBO;
 GLsizei gaussianCount = 0;
+GLsizei visibleCount = 0;
 
 GLuint gaussianEBO; // element buffer
+std::vector<uint32_t> visibleIndices;
 std::vector<glm::vec3> gaussianPositions;
-std::vector<uint32_t> sortedIndices;
 
 GLuint shRestBuffer;  // the buffer
 GLuint shRestTex;     // the texture handle
+int sh_degree = 3;
 
 
 
@@ -339,16 +337,10 @@ void display(void)
 	labhelper::setUniformSlow(splatProgram, "cameraPos", cameraPosition);
 	labhelper::setUniformSlow(splatProgram, "sh_degree", sh_degree);
 
-    // Re-upload sorted indices
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gaussianEBO);
 
+    // Create list of gaussian indices to be rendered
     if (enableFrustumCulling) {
         visibleCount = frustumCull(viewProjMatrix);
-
-        auto t0 = std::chrono::high_resolution_clock::now();
-        radixSortGaussians(cameraPosition, cameraDirection, visibleCount);
-        auto t1 = std::chrono::high_resolution_clock::now();
-        sortTimeMs = std::chrono::duration<float, std::milli>(t1 - t0).count();
 
     } else {
 
@@ -358,29 +350,32 @@ void display(void)
         for (int i = 0; i < gaussianCount; i++) {
             visibleIndices[i] = i;
         }
-
-        auto t0 = std::chrono::high_resolution_clock::now();
-        radixSortGaussians(cameraPosition, cameraDirection, visibleCount);
-        auto t1 = std::chrono::high_resolution_clock::now();
-        sortTimeMs = std::chrono::duration<float, std::milli>(t1 - t0).count();
     }
 
+    // Sort gaussiand back-to-front
+    auto t0 = std::chrono::high_resolution_clock::now();
+    radixSortGaussians(cameraPosition, cameraDirection, visibleCount);
+    auto t1 = std::chrono::high_resolution_clock::now();
+    sortTimeMs = std::chrono::duration<float, std::milli>(t1 - t0).count();
+
+    // Upload sorted list of indices
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, gaussianEBO);
     glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0,
             visibleCount * sizeof(uint32_t),
             visibleIndices.data());
+
 
     // Load f_rest to texture buffer
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_BUFFER, shRestTex);
     labhelper::setUniformSlow(splatProgram, "shRestData", 0); // texture unit 0
 
-    // Draw using indices instead of glDrawArrays
+    // Draw using indices
     glBindVertexArray(gaussianVAO);
 
-    auto t0 = std::chrono::high_resolution_clock::now();
+    t0 = std::chrono::high_resolution_clock::now();
     glDrawElements(GL_POINTS, visibleCount, GL_UNSIGNED_INT, 0);
-    auto t1 = std::chrono::high_resolution_clock::now();
+    t1 = std::chrono::high_resolution_clock::now();
     drawTimeMs = std::chrono::duration<float, std::milli>(t1 - t0).count();
 
 }
