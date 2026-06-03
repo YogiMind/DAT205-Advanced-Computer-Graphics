@@ -28,6 +28,7 @@ float previousTime = 0.0f;
 float deltaTime = 0.0f;
 int windowWidth, windowHeight;
 
+GLuint timerQuery = 0;
 static float sortTimeMs = 0.0f;
 static float drawTimeMs = 0.0f;
 
@@ -282,6 +283,9 @@ void initialize()
 
     glBindVertexArray(0);
 
+    // Initialize GPU timer
+    glGenQueries(1, &timerQuery);
+
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 }
@@ -373,11 +377,14 @@ void display(void)
     // Draw using indices
     glBindVertexArray(gaussianVAO);
 
-    t0 = std::chrono::high_resolution_clock::now();
+    // Timer for GPU
+    glBeginQuery(GL_TIME_ELAPSED, timerQuery);
     glDrawElements(GL_POINTS, visibleCount, GL_UNSIGNED_INT, 0);
-    t1 = std::chrono::high_resolution_clock::now();
-    drawTimeMs = std::chrono::duration<float, std::milli>(t1 - t0).count();
+    glEndQuery(GL_TIME_ELAPSED);
 
+    GLuint64 elapsed;
+    glGetQueryObjectui64v(timerQuery, GL_QUERY_RESULT, &elapsed);
+    drawTimeMs = elapsed / 1e6f;
 }
 
 
